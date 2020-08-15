@@ -1,0 +1,233 @@
+---
+title: "Assignment 2"
+author: "Jyotsna, Pallav, Shashank"
+date: "01/03/2020"
+geometry: "left=3cm,right=3cm,top=0.5cm,bottom=2cm"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(dplyr)
+library(pastecs)
+library(car)
+```
+
+## 1. Introduction to Data
+
+
+The objective of this assignment is to understand the *global health epidemics* and to analyse the factors related to Tuberculosis (TB). There are different data sets which provide country-wise information about estimates of incidence & mortality, outcomes, community engagement,laboratories, budgets etc. over a period of time. We thoroughly checked all the data sets and interpreted the relation among different variables.
+
+After scrutinizing the data, we decided to focus on the estimates of HIV patients with TB and Total Estimates of TB. To initiate our analysis, we chose only one data set, i.e., *TB_burden_countries_2020-02-29 data set*. The data set contains estimation of incidences, incidences per 100k, mortality rate, case fatality ratio along with other useful parameters. It contains 4040 observation and 50 variables out of which 5 are **"character"** variables and remaining are **"numeric"**.
+ 
+
+```{r, echo=FALSE, include = FALSE}
+inciData <- read_csv("C:/Users/Shanky/Downloads/TB_burden_countries_2020-02-29.csv")
+str(inciData)
+```
+
+
+The summary statistics of the two variables which are used for further analysis is as follows:
+
+```{r, echo=FALSE,include=FALSE}
+summary(inciData %>% select(e_inc_100k,e_inc_tbhiv_100k))
+```
+
+**Variables of Interest**:
+
+a) e_inc_100k - This variable shows the estimate incidence of TB per 100k population. It ranges from 0 to 1280 with a mean of 125.8.
+
+b) e_inc_tbhiv_100k - This variable shows the estimate incidence of TB who are HIV positive per 100k population. It ranges from 0 to 983 with a mean of 38.04.
+
+
+
+**Data Wrangling**
+
+
+*Tidy* - The data set looks tidy as each variable has a column and each observation on those variables has its own row. 
+
+*Filter* - We will select specific variables of interest by using dplyr.
+
+*Clean* - Next step is to clean the data, which involves identifying the missing values and removing them if required.There are 613 missing values in the "e_inc_tbhiv_100k" variable. Since there is no specific logic for imputation of the missing values, it is better to remove these observations.
+
+```{r, echo=FALSE, include=FALSE}
+inciData1 <- inciData %>% select("country","g_whoregion","year",ends_with("100k"),ends_with("num"))
+inciData1 %>% summarise_all(list(~sum(is.na(.))))
+inciData1_nmv <- inciData1 %>% filter(!is.na(e_inc_tbhiv_100k))
+inciData1_nmv %>% summarise_all(list(~sum(is.na(.))))
+```
+
+
+
+The region-wise boxplot shows the variation in the TB incidence per 100k among different regions-
+
+```{r, echo=FALSE,fig.height=2.65,fig.width=5,fig.align="center"}
+inciData1_nmv %>% ggplot(aes(x = g_whoregion,y=e_inc_100k,fill = g_whoregion))+geom_boxplot()+theme_bw()+labs(title = "Regionwise TB Incidence per 100k",x = "Region", y = "Number of TB Inc per 100k")+theme(legend.position = "none")
+```
+
+The boxplot indicates that Africa (AFR) and South East Asia (SEA) have most number of TB incidence cases per 100k followed by Western Pacific Region (WPR). There are few data points which fall outside the upper bound of **inter-quartile range (IQR)**. A value is suspected to be a potential outlier if it is less than (1.5)(IQR) below the first quartile or more than (1.5)(IQR) above the third quartile.
+On further investigation, it was observed that these values correspond to the countries with low population and high number of TB incidence per 100k so they can not be considered as **outliers**.
+
+
+
+## 2. Planning
+
+AFR, SEA and WPR regions encounter almost 80% of the all the TB incidence cases, so, further data analysis is done by focusing majorly on these three regions. **Our hypotheses is - People who have HIV are at a higher risk of developing TB as compared with non HIV population**.
+
+In this section, we will check for *assumptions for normality and homoscedacity*. The basic visual inspection of normality can be done by plotting histograms. Let us see the **histograms** for our variables-
+
+```{r, echo = FALSE,fig.height=3,fig.width=7,fig.align="center"}
+inciData_f <- inciData1_nmv %>% filter((g_whoregion=="AFR"|g_whoregion=="SEA"|g_whoregion=="WPR"))
+
+G1 <- inciData_f %>%
+  ggplot(aes(e_inc_100k))+
+  geom_histogram(aes(y=..density..),binwidth=35,fill="skyblue",color="brown")+
+  stat_function(fun = dnorm, args = list(mean = mean(inciData$e_inc_100k,na.rm = TRUE),sd=sd(inciData$e_inc_100k,na.rm = TRUE)))+
+  theme_bw()+labs(title = "No. of TB Inc per 100k",x = "TB Inc per 100k")
+
+G2 <- inciData_f %>%
+  ggplot(aes(e_inc_tbhiv_100k))+geom_histogram(aes(y=..density..),binwidth=35,fill="orange",color="black")+ stat_function(fun = dnorm, args = list(mean = mean(inciData$e_inc_tbhiv_100k,na.rm = TRUE),sd=sd(inciData$e_inc_tbhiv_100k,na.rm = TRUE)))+
+  theme_bw()+labs(title = "No. of TB Inc with HIV per 100k",x="TB Inc with HIV per 100k")
+
+G3 <- inciData_f %>% ggplot(aes(sample=e_inc_100k)) + stat_qq()+geom_qq_line(aes(color="red")) + theme_bw()+theme(legend.position = "none")
+
+G4 <- inciData_f %>% ggplot(aes(sample=e_inc_tbhiv_100k))+
+  stat_qq() + geom_qq_line(aes(color="red"))+theme_bw()+theme(legend.position = "none")
+
+grid.arrange(G1,G2,G3,G4,nrow = 2)
+```
+
+QQ plots and histograms are positively skewed and does not look normal. Let's try transforming the data using **log transformation** and compare the QQ plots.
+
+
+```{r,echo=FALSE, warning=FALSE,fig.height=3,fig.width=7,fig.align="center"}
+inciData_f <- inciData_f %>% filter(e_inc_100k>0 & e_inc_tbhiv_100k>0) %>% mutate(log_tbinc=log(e_inc_100k),log_tbhivinc = log(e_inc_tbhiv_100k))
+
+G3_tf <- inciData_f %>% ggplot(aes(sample=log_tbinc)) + stat_qq()+geom_qq_line(aes(color="red")) + theme_bw()+theme(legend.position = "none")
+
+G4_tf <- inciData_f %>% ggplot(aes(sample=log_tbhivinc)) + stat_qq()+geom_qq_line(aes(color="red")) + theme_bw()+theme(legend.position = "none")
+grid.arrange(G3_tf,G4_tf, nrow = 1)
+```
+
+
+The plots look better after transformation but are still skewed.
+
+Another way is to do quantitative normality tests for **skewness and kurtosis**. We will perform these tests on the transformed data and interpret the results.
+
+
+```{r,echo=FALSE}
+S1 <- stat.desc(inciData_f$log_tbinc, basic = FALSE, norm = TRUE)["skew.2SE"]
+S2 <- stat.desc(inciData_f$log_tbinc, basic = FALSE, norm = TRUE)["kurt.2SE"]
+S3 <- stat.desc(inciData_f$log_tbhivinc, basic = FALSE, norm = TRUE)["skew.2SE"]
+S4 <- stat.desc(inciData_f$log_tbhivinc, basic = FALSE, norm = TRUE)["kurt.2SE"]
+S5 <- matrix(c(S1,S2,S3,S4),ncol = 2, byrow = TRUE)
+colnames(S5) <- c("skew.2SE","kurt.2SE")
+rownames(S5) <- c("TB Inc", "TB Inc with HIV")
+S5
+```
+
+Because the absolute value of skew.2SE is greater than 1, we conclude that the **skewness for both variables is different from 0**. For Kurtosis, values are greater than 1, therefore we can say that **kurtosis is different from 0**. The results of skewness & kurtosis were quite high before data transformation.
+
+
+To further test for normality, we use Shapiro-Wilk normality test and the test shows that the *TB incidence per 100k is significantly non normal at 5% level of significance (p value < .05)*
+
+```{r,echo=FALSE,include=FALSE}
+shapiro.test(inciData_f$log_tbinc)
+shapiro.test(inciData_f$log_tbhivinc)
+```
+
+
+So we can conclude that the normality assumption does not hold true for both the variables based on visual as well as quantitative inspection. Next is the **homoscedacity** assumption which can be checked through levene test.
+
+```{r, echo=FALSE, warning=FALSE,include=FALSE}
+leveneTest(inciData_f$log_tbinc,inciData_f$log_tbhivinc)
+```
+
+Based on Levene Test, it is found that *homogeneity of variance is significant at 5% level of significance (F=1.5886, p < 0.05), so we can thus infer that the assumption of homoscedasity is not met*. 
+
+
+
+
+## 3. Analysis
+
+Now let's look at the correlation between our variables of interest. We will do a quick visual check by using a scatter plot. 
+
+```{r,echo=FALSE,fig.height=3,fig.width=5,fig.align="center"}
+inciData_f %>% ggplot(aes(e_inc_tbhiv_100k,e_inc_100k))+geom_point()+
+  labs(title = "Scatter Plot",x = "TB Inc per 100k", y = "TB Inc with HIV per 100k")
+```
+
+It looks like Total TB incidences might be positively correlated with TB incidences in people who have HIV. But correlation does not necessarily implies causation. We can test for correlation by using cor.test() and Pearson coefficient as we have interval data.
+
+
+**Total TB Incidences are significantly correlated with TB Incidences in people with HIV**, r=0.84 (p < 0.001, 95% CI 0.827 to 0.858). A correlation of 0.84 represents a large effect explaining 71.11% of the variance. 
+
+```{r,echo=FALSE,include=FALSE}
+cor.test(inciData_f$e_inc_100k,inciData_f$e_inc_tbhiv_100k, method = "pearson")
+```
+
+Let's get more insights on TB incidence with respect to age and sex for the year 2018.
+After doing data wrangling, we see some interesting results.
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE,fig.align="center", fig.height=3, fig.width=8}
+ageData <- read_csv("C:/Users/Shanky/Downloads/TB_burden_age_sex_2020-02-29.csv")
+age_filter <- ageData[,c(1,5,8,9,10,11)] %>% filter(age_group == "0-14"|age_group == "15plus")
+p1 <- age_filter %>% group_by(country,age_group,sex) %>% summarise(best_tot = sum(best))
+p2 <- p1 %>% pivot_wider(names_from = sex,values_from = best_tot)
+p3 <- p2 %>% select(-a) %>% mutate(total = sum(f+m),
+               m_prop = m/total,
+             f_prop =f/total) %>% filter(!is.na(f_prop))
+bp1 <- p3 %>% ggplot(aes(x = age_group, y=m_prop, color = age_group))+geom_boxplot()+
+  labs(title = "TB inc rate based on sex in 2018",x = "Age group", y = "% of Males with TB inc")+
+  theme_bw()+theme(legend.position = "none")
+bp2 <- p3 %>% ggplot(aes(x = age_group, y=f_prop, color = age_group))+geom_boxplot()+
+  labs(x = "Age group", y = "% of Females with TB inc")+
+  theme_bw()+theme(legend.position = "none")
+grid.arrange(bp1,bp2,nrow = 1)
+```
+
+From the boxplots of TB incidence rate, we observe that higher proportion of males is affected by TB as compared with females. If we look at 15 plus age group, males have 65% incidence rate whereas females are at about 35%.
+
+If we observe the TB mortality rates of HIV and Non HIV population, there is significant difference between them. The percentage of people who had HIV before death is almost 2.5 times higher than the people who did not have HIV. The graph indicates that the mortality rates are declining over the last 18 years which may be a result of better healthcare and increased awareness about the disease but the difference in the HIV and Non HIV TB morality rates is more or less constant.
+
+
+```{r,echo=FALSE, fig.align="center", fig.height=4, fig.width=8, message=FALSE, warning=FALSE}
+Death <- inciData1 %>% mutate(nonhiv = e_inc_num - e_inc_tbhiv_num,nonhivd = e_mort_num - e_mort_tbhiv_num)
+Death <- na.omit(Death)
+Death_rate <- Death %>% select(g_whoregion,year,e_mort_tbhiv_num,nonhivd,e_inc_tbhiv_num,nonhiv) %>% group_by(g_whoregion,year) %>% summarise_all(funs(sum)) %>% mutate(phivd = e_mort_tbhiv_num/e_inc_tbhiv_num, pnonhivd = nonhivd/nonhiv)
+GD1 <- Death_rate %>% ggplot(aes(x = year, y = phivd))+geom_smooth(se=FALSE,color = "red")+
+  labs(title = "Mortality Rate (%) trend HIV (red) vs Non HIV(blue)", x = "Year", y = "Mortality Rate %")
+
+GD1 + geom_smooth(aes(y=pnonhivd),se=FALSE,color= "blue")+theme_bw()
+```
+
+One of the reasons for this gap could be the *disproportionate budget allocation* for TB HIV patients. For example, Africa region got 4.5% of the total budget for TB HIV patients in 2018 and it had the highest proportion (37%) of TB HIV patients.
+
+
+```{r,echo=FALSE,include=FALSE}
+budget <- read.csv("C:/Users/Shanky/Downloads/TB_budget_2020-03-04.csv")
+budget<- na.omit(budget)
+bud1<-budget %>% group_by(g_whoregion) %>% filter(!is.na(budget_tbhiv)) %>% summarise(summation = sum(budget_tbhiv))
+bud2<-budget %>% group_by(g_whoregion) %>% filter(!is.na(budget_tot)) %>% summarise(summation1 = sum(as.numeric(budget_tot)))
+S1<-left_join(bud1,bud2)
+S1 %>% mutate(percentage=(summation/summation1)*100)
+```
+
+
+
+
+## 4. Conclusion
+
+
+We got quite wonderful insights through our analysis which supports the hypothesis that people with HIV are  at a higher risk of developing TB as compared with Non HIV population. Additionally, males have higher incidence of TB than females. Although the government is allocating resources to control this disease but still there are a few gaps in terms of financial allocation and health facilities which vary across countries. Moreover, the mortality rates have declined over the years which is a positive sign. There are other factors as well which directly or in-directly affect the incidence of TB but we can surely conclude that HIV is one of the important factors which causes TB.
+
+
+
+
+
+
+
+
