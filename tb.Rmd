@@ -1,6 +1,4 @@
 ---
-title: "Assignment 2"
-author: "Jyotsna, Pallav, Shashank"
 date: "01/03/2020"
 geometry: "left=3cm,right=3cm,top=0.5cm,bottom=2cm"
 output: pdf_document
